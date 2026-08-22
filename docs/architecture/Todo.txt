@@ -1,0 +1,4102 @@
+Yes. I reviewed the roadmap you attached, and **it was still missing several layers that matter when you say “production-grade”**. 
+
+The biggest correction is this:
+
+> We should not think of RecoverAI as “a web app with an AI agent.”
+> We should think of it as a **small fintech platform** that happens to contain an AI decision system.
+
+That changes the architecture considerably.
+
+Razorpay’s current webhook guidance reinforces several of the things we need to design around: webhooks are asynchronous and can be duplicated or delivered out of order, and Razorpay expects signature verification, idempotent handling, and fast 2xx responses. ([Razorpay][1]) Razorpay also distinguishes Test Mode from Live Mode and warns that API secrets must be protected. ([Razorpay][2])
+
+OpenTelemetry's current guidance also treats **traces, metrics, and logs as correlated observability signals**, which is exactly how I want us to design the system rather than sprinkling `console.log()` throughout it. ([OpenTelemetry][3])
+
+---
+
+# 1. Final product definition
+
+## **RecoverAI**
+
+**Autonomous Revenue Recovery & Payment Operations Platform**
+
+The system receives payment events, builds a recovery case, evaluates it, allows an AI agent to recommend a recovery action, applies deterministic policies, executes only permitted actions, verifies the result, and records the entire lifecycle.
+
+The core principle:
+
+```text
+AI recommends
+      ↓
+Application validates
+      ↓
+Policy engine authorizes
+      ↓
+Action executor performs
+      ↓
+Payment system confirms
+      ↓
+Audit system records
+      ↓
+Observability explains
+```
+
+That is the architecture I want.
+
+---
+
+# 2. What we are actually building
+
+Not an Android app.
+
+Not an AI chatbot.
+
+Not just a dashboard.
+
+We're building **one web platform with several surfaces**:
+
+```text
+                    RecoverAI
+                       │
+       ┌───────────────┼────────────────┐
+       │               │                │
+       ▼               ▼                ▼
+ Merchant Web      Customer Web      Operations/Admin
+ Dashboard         Recovery UI       Console
+       │
+       └───────────────┬────────────────┘
+                       ▼
+                 API Platform
+                       │
+          ┌────────────┼─────────────┐
+          ▼            ▼             ▼
+      PostgreSQL     Redis          Object
+                                    Storage
+          │            │
+          │            ▼
+          │         Workers
+          │            │
+          └────────────┼─────────────┐
+                       ▼             │
+                Recovery Engine      │
+                       │             │
+            ┌──────────┼──────────┐  │
+            ▼          ▼          ▼  │
+           AI       Policy      Risk │
+         Engine     Engine      Guard│
+            │          │          │  │
+            └──────────┼──────────┘  │
+                       ▼             │
+                 Action Executor     │
+                       │             │
+              ┌────────┼────────┐    │
+              ▼        ▼        ▼    │
+          Razorpay  Notifications  Human
+          APIs      / Messaging    Approval
+              │
+              ▼
+          Verification
+              │
+              ▼
+         Audit + Events
+              │
+              ▼
+     Logs / Metrics / Traces
+```
+
+---
+
+# 3. Architecture principle: modular monolith
+
+The previous answer was correct that we **shouldn't build 20 microservices**.
+
+But I want to be more precise.
+
+## We build:
+
+### Application layer
+
+```text
+web
+api
+worker
+```
+
+### Domain modules
+
+```text
+identity
+organizations
+customers
+payments
+orders
+recovery
+agents
+policies
+approvals
+notifications
+audit
+webhooks
+analytics
+```
+
+### Infrastructure adapters
+
+```text
+postgres
+redis
+razorpay
+email
+llm
+observability
+storage
+```
+
+This lets us later split services without rewriting the domain.
+
+---
+
+# 4. Repository architecture
+
+I would now make the repository more serious than the previous version.
+
+```text
+recoverai/
+│
+├── apps/
+│   ├── web/
+│   ├── api/
+│   ├── worker/
+│   └── ops/
+│
+├── packages/
+│   ├── config/
+│   ├── database/
+│   ├── domain/
+│   ├── shared/
+│   ├── validation/
+│   ├── auth/
+│   ├── payments/
+│   ├── recovery/
+│   ├── ai/
+│   ├── policies/
+│   ├── notifications/
+│   ├── audit/
+│   ├── observability/
+│   └── security/
+│
+├── infrastructure/
+│   ├── docker/
+│   ├── terraform/
+│   ├── monitoring/
+│   └── scripts/
+│
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   ├── e2e/
+│   ├── contract/
+│   ├── security/
+│   ├── load/
+│   └── ai-evals/
+│
+├── docs/
+│   ├── product/
+│   ├── architecture/
+│   ├── security/
+│   ├── operations/
+│   ├── ai/
+│   ├── api/
+│   ├── database/
+│   ├── runbooks/
+│   ├── adr/
+│   └── threat-model/
+│
+├── .github/
+│   └── workflows/
+│
+├── docker-compose.yml
+├── .env.example
+├── README.md
+└── LICENSE
+```
+
+---
+
+# 5. Frontend architecture
+
+## Merchant application
+
+Next.js + TypeScript.
+
+But the UI itself needs structure.
+
+```text
+app/
+├── login
+├── onboarding
+├── dashboard
+├── payments
+├── customers
+├── recoveries
+├── approvals
+├── agents
+├── policies
+├── webhooks
+├── audit
+├── observability
+├── simulations
+└── settings
+```
+
+---
+
+# 6. Frontend state management
+
+Don't turn the frontend into a mess of fetch calls.
+
+Use:
+
+* TanStack Query for server state
+* local component state for UI state
+* form validation with Zod
+* centralized auth/session handling
+* error boundary
+* loading states
+* optimistic UI only where safe
+
+Money-related operations should **not** use optimistic state that could imply a payment succeeded before backend confirmation.
+
+---
+
+# 7. Frontend security
+
+The browser is **untrusted**.
+
+Never rely on:
+
+```text
+if (user.role === "admin") {
+   showButton()
+}
+```
+
+as a security boundary.
+
+The backend must independently authorize:
+
+```text
+POST /policies/:id
+```
+
+The frontend only controls presentation.
+
+OWASP ASVS is an appropriate security baseline for our verification checklist. OWASP describes ASVS as a basis for testing web application security controls and secure development requirements; the current stable ASVS is 5.0.0. ([OWASP Foundation][4])
+
+---
+
+# 8. Customer recovery page
+
+This deserves its own security model.
+
+Example:
+
+```text
+https://recoverai.com/r/abc123
+```
+
+But **not**:
+
+```text
+/recovery/customer/12345
+```
+
+Use opaque, expiring tokens.
+
+The token should:
+
+* expire
+* be single-use where appropriate
+* be revocable
+* reveal minimal data
+* never expose internal database IDs directly
+
+---
+
+# 9. API gateway layer
+
+Every incoming API request passes through:
+
+```text
+Internet
+ ↓
+TLS
+ ↓
+WAF / reverse proxy
+ ↓
+Rate limiter
+ ↓
+Request ID
+ ↓
+Authentication
+ ↓
+Authorization
+ ↓
+Validation
+ ↓
+Controller
+```
+
+---
+
+# 10. Authentication
+
+For the merchant dashboard:
+
+Prefer:
+
+**secure session-based authentication** for the web app.
+
+Support:
+
+```text
+email/password
+OAuth
+```
+
+Later:
+
+```text
+MFA
+```
+
+For production architecture, MFA should be considered mandatory for privileged administrative roles.
+
+---
+
+# 11. Session security
+
+Sessions should have:
+
+```text
+Secure
+HttpOnly
+SameSite
+expiration
+rotation
+revocation
+```
+
+We need:
+
+```text
+logout all sessions
+revoke compromised sessions
+session activity
+```
+
+---
+
+# 12. Authorization
+
+RBAC alone isn't enough.
+
+We need:
+
+## RBAC
+
+```text
+OWNER
+ADMIN
+OPERATOR
+ANALYST
+VIEWER
+```
+
+## Plus organization isolation
+
+Every query must respect:
+
+```text
+organization_id
+```
+
+A user from:
+
+```text
+Org A
+```
+
+must never be able to request:
+
+```text
+Org B recovery
+```
+
+---
+
+# 13. Object-level authorization
+
+This is a very important missing piece from the previous roadmap.
+
+This request:
+
+```text
+GET /recoveries/rec_123
+```
+
+must check:
+
+```text
+Does rec_123 belong to this user's organization?
+```
+
+Not simply:
+
+```text
+Is this user logged in?
+```
+
+This prevents IDOR-style access-control bugs.
+
+---
+
+# 14. Database tenancy
+
+Every tenant-owned entity should contain:
+
+```text
+organization_id
+```
+
+And the service layer should enforce tenant scope.
+
+Examples:
+
+```text
+customers
+orders
+payments
+recoveries
+policies
+audit_logs
+```
+
+---
+
+# 15. Database security
+
+PostgreSQL:
+
+```text
+TLS
+encrypted storage
+least-privileged DB user
+separate migration credentials
+connection pooling
+prepared queries
+```
+
+We should also consider database-level row isolation as an additional defense where practical.
+
+---
+
+# 16. Secrets management
+
+Local development:
+
+```text
+.env
+```
+
+But staging/production:
+
+**don't just upload a `.env` file to the server.**
+
+Use a proper secret store available from the chosen cloud provider.
+
+Store:
+
+```text
+Razorpay secret
+Webhook secret
+LLM API key
+Database credentials
+Session secret
+OAuth secrets
+Encryption keys
+```
+
+And implement key rotation procedures.
+
+Razorpay explicitly states that API key secrets must be kept secure and not exposed publicly. ([Razorpay][5])
+
+---
+
+# 17. Encryption
+
+### In transit
+
+HTTPS/TLS.
+
+### At rest
+
+Managed database encryption.
+
+### Sensitive application values
+
+Encryption where required.
+
+But don't encrypt everything blindly because then searching and indexing become painful.
+
+We should classify data first.
+
+---
+
+# 18. Data classification
+
+Define:
+
+```text
+PUBLIC
+INTERNAL
+CONFIDENTIAL
+SENSITIVE
+```
+
+Example:
+
+```text
+dashboard metrics      → INTERNAL
+customer email         → CONFIDENTIAL
+payment reference      → CONFIDENTIAL
+API secret             → SENSITIVE
+card data              → NOT STORED
+```
+
+---
+
+# 19. PCI scope minimization
+
+This is particularly important.
+
+**We do not want RecoverAI to handle raw card data.**
+
+Razorpay handles the payment processing.
+
+RecoverAI stores references such as:
+
+```text
+payment_id
+order_id
+customer_reference
+status
+amount
+```
+
+not raw card numbers/CVV.
+
+This dramatically reduces what our system needs to protect.
+
+---
+
+# 20. Payment domain
+
+Don't let arbitrary parts of the application modify payment state.
+
+Create a dedicated:
+
+```text
+PaymentService
+```
+
+Responsibilities:
+
+```text
+create order
+create checkout configuration
+fetch payment
+verify payment
+create allowed payment actions
+```
+
+---
+
+# 21. Razorpay integration boundary
+
+Never let:
+
+```text
+RecoveryAgent
+```
+
+directly call Razorpay SDK.
+
+Instead:
+
+```text
+RecoveryAgent
+      ↓
+Action
+      ↓
+PaymentService
+      ↓
+RazorpayAdapter
+      ↓
+Razorpay
+```
+
+This is a huge architectural improvement.
+
+The AI never receives raw payment credentials or infrastructure access.
+
+---
+
+# 22. Webhook architecture
+
+Razorpay says webhook delivery is asynchronous, can be duplicated, and may not always arrive in order. It also recommends signature verification and fast successful responses. ([Razorpay][1])
+
+Therefore:
+
+```text
+POST /webhooks/razorpay
+
+1. Receive raw body
+2. Validate size
+3. Verify signature
+4. Extract event ID
+5. Persist raw event safely
+6. Detect duplicate
+7. Create processing job
+8. Return 2xx
+```
+
+**No LLM.**
+
+**No business workflow.**
+
+**No long database chain.**
+
+inside the request.
+
+---
+
+# 23. Raw webhook body
+
+One subtle but important detail:
+
+Webhook signature validation depends on the original raw body. Razorpay explicitly warns against validating against a re-encoded JSON body. ([Razorpay][6])
+
+Therefore the API framework must be configured to preserve the raw payload for this endpoint.
+
+---
+
+# 24. Webhook event ledger
+
+Table:
+
+```text
+webhook_events
+
+id
+provider
+provider_event_id
+event_type
+received_at
+signature_valid
+payload_hash
+processing_status
+processing_attempts
+first_processed_at
+last_processed_at
+trace_id
+```
+
+Constraint:
+
+```text
+UNIQUE(provider, provider_event_id)
+```
+
+---
+
+# 25. Event ordering
+
+Do not assume:
+
+```text
+payment.authorized
+→ payment.captured
+```
+
+always arrives exactly in that order.
+
+Razorpay explicitly documents that webhook ordering isn't guaranteed. ([Razorpay][7])
+
+Our handler must compare:
+
+```text
+current known payment state
++
+incoming event state
++
+event timestamp/version
+```
+
+and safely converge on the correct state.
+
+---
+
+# 26. Payment state machine
+
+Example:
+
+```text
+CREATED
+   ↓
+AUTHORIZED
+   ↓
+CAPTURED
+
+or
+
+CREATED
+   ↓
+FAILED
+```
+
+But late events can occur.
+
+Therefore the state machine needs:
+
+* legal transitions
+* stale-event detection
+* reconciliation
+* terminal states
+* replay strategy
+
+---
+
+# 27. Reconciliation engine
+
+This was missing from the original roadmap.
+
+Suppose:
+
+```text
+Webhook lost
+```
+
+What happens?
+
+We cannot permanently trust our own database.
+
+Create a periodic reconciliation job:
+
+```text
+Our DB
+   VS
+Razorpay API
+```
+
+Find discrepancies:
+
+```text
+Our DB = FAILED
+Razorpay = CAPTURED
+```
+
+Then:
+
+```text
+RECONCILIATION_REQUIRED
+```
+
+and safely repair state.
+
+This is **very fintech-like** and worth showcasing.
+
+Razorpay's documentation also notes that business-critical synchronous verification may use APIs in addition to asynchronous webhooks. ([Razorpay][1])
+
+---
+
+# 28. Recovery domain
+
+A **recovery case** should be its own entity.
+
+Example:
+
+```text
+RecoveryCase
+```
+
+contains:
+
+```text
+id
+organization_id
+customer_id
+payment_id
+amount
+reason_code
+priority
+status
+risk_level
+current_strategy
+attempt_count
+next_action_at
+expires_at
+created_at
+updated_at
+```
+
+---
+
+# 29. Recovery actions
+
+Separate table:
+
+```text
+recovery_actions
+```
+
+Example:
+
+```text
+id
+recovery_id
+action_type
+requested_by
+requested_at
+policy_decision
+execution_status
+idempotency_key
+provider_reference
+completed_at
+error_code
+```
+
+So one recovery can have:
+
+```text
+Attempt 1
+Attempt 2
+Attempt 3
+```
+
+without overwriting history.
+
+---
+
+# 30. Immutable audit history
+
+Don't update:
+
+```text
+"AI decision = RETRY"
+```
+
+into:
+
+```text
+"AI decision = PAYMENT_LINK"
+```
+
+and lose the history.
+
+Store:
+
+```text
+Decision 1 = RETRY
+Decision 2 = PAYMENT_LINK
+```
+
+The history should explain how the system arrived at the final result.
+
+---
+
+# 31. Audit event structure
+
+```text
+audit_events
+
+id
+organization_id
+actor_type
+actor_id
+action
+resource_type
+resource_id
+reason_code
+policy_id
+request_id
+trace_id
+timestamp
+metadata
+```
+
+Actor types:
+
+```text
+USER
+AI_AGENT
+SYSTEM
+WEBHOOK
+WORKER
+ADMIN
+```
+
+---
+
+# 32. AI architecture — revised
+
+The previous multi-agent plan could itself become overengineered.
+
+I would use:
+
+## One orchestrator
+
+```text
+Recovery Orchestrator
+```
+
+with specialized capabilities:
+
+```text
+analyze
+retrieve context
+recommend strategy
+generate communication
+```
+
+Rather than several independent LLM agents arguing with one another.
+
+That gives us:
+
+* lower latency
+* lower cost
+* easier debugging
+* fewer nondeterministic failure modes
+
+---
+
+# 33. AI decision pipeline
+
+```text
+Recovery Case
+      ↓
+Context Builder
+      ↓
+LLM
+      ↓
+Structured Recommendation
+      ↓
+Schema Validator
+      ↓
+Risk Validator
+      ↓
+Policy Engine
+      ↓
+Approval / Execution
+```
+
+---
+
+# 34. Context builder
+
+Don't dump the whole database into the prompt.
+
+Create a bounded context:
+
+```text
+payment status
+amount
+failure category
+retry count
+customer history summary
+merchant policy
+recent actions
+time since failure
+```
+
+This reduces prompt size and attack surface.
+
+---
+
+# 35. AI tool sandbox
+
+Tools should be explicit.
+
+```text
+READ:
+get_payment
+get_customer_summary
+get_recovery_history
+
+DECISION:
+calculate_recovery_score
+
+ACTION:
+create_payment_link
+schedule_retry
+send_message
+
+HIGH_RISK:
+apply_discount
+refund
+```
+
+And tool arguments go through schema validation.
+
+---
+
+# 36. Tool-call authorization
+
+Every tool call is evaluated:
+
+```text
+Who requested it?
+What organization?
+What resource?
+Is the tool allowed?
+Does policy allow this?
+Is human approval required?
+```
+
+Only then:
+
+```text
+execute
+```
+
+---
+
+# 37. Prompt injection defense
+
+Customer-controlled content must be marked as:
+
+```text
+UNTRUSTED DATA
+```
+
+The system prompt must explicitly separate:
+
+```text
+instructions
+from
+data
+```
+
+And even if the model is tricked:
+
+```text
+LLM
+ ↓
+policy
+ ↓
+permissions
+ ↓
+execution
+```
+
+prevents arbitrary financial actions.
+
+---
+
+# 38. Output validation
+
+The model must return something like:
+
+```json
+{
+  "decision": "SEND_PAYMENT_LINK",
+  "reason_code": "TEMPORARY_FAILURE",
+  "confidence": 0.91,
+  "requires_approval": false
+}
+```
+
+Then:
+
+```text
+JSON schema
+ ↓
+type validation
+ ↓
+allowed enum validation
+ ↓
+business rule validation
+```
+
+Anything malformed:
+
+```text
+AI_INVALID_OUTPUT
+```
+
+---
+
+# 39. AI model governance
+
+Track:
+
+```text
+provider
+model_name
+model_version
+prompt_version
+temperature/config
+request_id
+latency
+token usage
+decision
+fallback
+```
+
+Not just the final answer.
+
+This allows us to answer:
+
+> Which model and prompt produced this decision?
+
+---
+
+# 40. AI safety budget
+
+Each recovery gets:
+
+```text
+max AI calls
+max tool calls
+max execution time
+max retries
+max incentive
+```
+
+For example:
+
+```text
+AI calls <= 3
+tools <= 8
+payment retries <= 3
+discount <= policy limit
+```
+
+When exhausted:
+
+```text
+ESCALATE
+```
+
+---
+
+# 41. Deterministic fallback engine
+
+This is one of the strongest features.
+
+If AI fails:
+
+```text
+AI unavailable
+     ↓
+Rule engine
+     ↓
+Known safe strategy
+```
+
+Example:
+
+```text
+temporary failure
+AND attempts < 3
+AND payment not expired
+→ RETRY
+```
+
+Otherwise:
+
+```text
+ESCALATE
+```
+
+---
+
+# 42. Policy engine
+
+Make this a first-class module.
+
+Policies have:
+
+```text
+id
+name
+version
+scope
+priority
+conditions
+limits
+approval_requirement
+enabled
+created_by
+```
+
+Example:
+
+```text
+Maximum retries = 3
+
+Maximum discount = ₹100
+
+Contact interval = 6 hours
+
+High-value payment > ₹10,000
+→ human approval
+```
+
+---
+
+# 43. Policy evaluation result
+
+Every policy check produces:
+
+```json
+{
+  "result": "BLOCK",
+  "policy_id": "POL-014",
+  "reason": "DISCOUNT_EXCEEDS_LIMIT"
+}
+```
+
+This gets written to the audit trail.
+
+---
+
+# 44. Human approval system
+
+Approval isn't a boolean in the database.
+
+It should be an actual workflow:
+
+```text
+REQUESTED
+ ↓
+PENDING_REVIEW
+ ↓
+APPROVED / REJECTED
+ ↓
+EXPIRED
+```
+
+Every approval:
+
+```text
+who
+when
+why
+previous value
+requested action
+approved action
+```
+
+---
+
+# 45. Maker-checker principle
+
+For high-risk actions:
+
+```text
+AI recommends
+```
+
+but:
+
+```text
+different human
+```
+
+must approve.
+
+Especially useful to demonstrate for:
+
+* refunds
+* large discounts
+* repeated retries
+* unusual customer actions
+
+---
+
+# 46. Notification architecture
+
+Don't bury email logic inside the recovery service.
+
+Create:
+
+```text
+NotificationService
+```
+
+with adapters:
+
+```text
+EmailProvider
+SMSProvider
+WhatsAppProvider
+InAppProvider
+```
+
+For our demo:
+
+```text
+Email = simulated
+SMS = simulated
+WhatsApp = simulated
+```
+
+and:
+
+```text
+In-app = real
+```
+
+---
+
+# 47. Notification outbox
+
+Another missing production feature.
+
+Suppose:
+
+```text
+Recovery action succeeded
+```
+
+and then:
+
+```text
+email send fails
+```
+
+We don't want to lose the message.
+
+Use:
+
+```text
+Transactional Outbox
+```
+
+```text
+DB transaction
+  ├── recovery action
+  └── notification_outbox
+
+worker
+  ↓
+send notification
+  ↓
+mark sent
+```
+
+This prevents the classic database/external-service consistency problem.
+
+---
+
+# 48. Idempotency everywhere
+
+Not just webhooks.
+
+Idempotency keys for:
+
+```text
+create recovery
+create payment link
+send notification
+approve action
+retry action
+```
+
+Example:
+
+```text
+POST /recoveries/abc/retry
+Idempotency-Key: rec-abc-retry-2
+```
+
+Repeated call:
+
+```text
+same result
+```
+
+not duplicated execution.
+
+---
+
+# 49. Distributed locking
+
+Use locks only where needed.
+
+Example:
+
+```text
+recovery:rec_123
+```
+
+before processing.
+
+But don't rely solely on Redis locks.
+
+Always maintain database constraints/state transitions as the true correctness mechanism.
+
+---
+
+# 50. Queue architecture
+
+Create separate queues:
+
+```text
+recovery
+ai
+payments
+notifications
+reconciliation
+audit
+analytics
+```
+
+This prevents one overloaded queue from starving everything.
+
+---
+
+# 51. Queue policies
+
+Each queue gets:
+
+```text
+concurrency
+retry count
+backoff
+timeout
+dead-letter queue
+priority
+```
+
+---
+
+# 52. Poison messages
+
+A malformed event should not retry forever.
+
+Example:
+
+```text
+job fails
+→ retry 1
+→ retry 2
+→ retry 3
+→ DLQ
+```
+
+Then ops dashboard:
+
+```text
+DLQ = 7
+```
+
+with:
+
+```text
+inspect
+retry
+discard
+```
+
+---
+
+# 53. Worker graceful shutdown
+
+When deploying:
+
+```text
+SIGTERM
+ ↓
+stop taking new jobs
+ ↓
+finish active jobs
+ ↓
+close connections
+ ↓
+shutdown
+```
+
+No abrupt queue corruption.
+
+---
+
+# 54. Database migration safety
+
+Production migration process:
+
+```text
+build
+ ↓
+migration compatibility check
+ ↓
+backup
+ ↓
+migration
+ ↓
+health check
+ ↓
+deploy
+```
+
+Use backward-compatible changes whenever possible.
+
+---
+
+# 55. Connection management
+
+PostgreSQL:
+
+```text
+connection pooling
+pool limits
+timeouts
+idle timeout
+retry strategy
+```
+
+Don't let 50 worker tasks each create unlimited database connections.
+
+---
+
+# 56. API resilience
+
+Every external API call gets:
+
+```text
+timeout
+retry where safe
+exponential backoff
+jitter
+circuit breaker
+observability
+```
+
+But **don't retry non-idempotent actions blindly**.
+
+---
+
+# 57. Circuit breaker
+
+Example:
+
+```text
+Razorpay API
+ ↓
+5 consecutive failures
+ ↓
+OPEN
+ ↓
+temporarily stop calls
+ ↓
+HALF-OPEN
+ ↓
+probe
+ ↓
+CLOSED
+```
+
+This prevents cascading failure.
+
+---
+
+# 58. External API timeout budgets
+
+Don't let:
+
+```text
+API request
+```
+
+wait forever for:
+
+```text
+LLM
+```
+
+For example:
+
+```text
+browser request: 5 sec
+API processing: 3 sec
+LLM budget: 1.5 sec
+Razorpay call: 1 sec
+```
+
+Long workflows belong in the queue.
+
+---
+
+# 59. Business SLA thinking
+
+We should define:
+
+### SLI
+
+What we measure.
+
+Example:
+
+```text
+webhook processing latency
+recovery completion rate
+API success rate
+```
+
+### SLO
+
+Our target.
+
+Example:
+
+```text
+99% of accepted webhook events
+are enqueued within X seconds.
+```
+
+These would be **project design targets**, not claims of real Razorpay SLA.
+
+OpenTelemetry's observability guidance explicitly frames SLIs and SLOs as ways of connecting system reliability with user/business expectations. ([OpenTelemetry][8])
+
+---
+
+# 60. Observability: full design
+
+Use:
+
+### Logs
+
+"What happened?"
+
+### Metrics
+
+"How often?"
+
+### Traces
+
+"Where did it spend time / fail?"
+
+OpenTelemetry supports traces, metrics, logs and context propagation for correlating these signals. ([OpenTelemetry][3])
+
+---
+
+# 61. Request IDs
+
+Every request:
+
+```text
+request_id
+```
+
+Every distributed workflow:
+
+```text
+trace_id
+```
+
+Every unit of work:
+
+```text
+span_id
+```
+
+Example:
+
+```text
+request_id=req_123
+trace_id=tr_456
+```
+
+These appear in:
+
+* API logs
+* worker logs
+* AI spans
+* DB traces
+* webhook records
+* audit records
+
+---
+
+# 62. Structured logs
+
+Never:
+
+```text
+Payment failed
+```
+
+Prefer:
+
+```json
+{
+  "level": "error",
+  "event": "payment_verification_failed",
+  "payment_id": "pay_123",
+  "organization_id": "org_1",
+  "provider": "razorpay",
+  "error_code": "TIMEOUT",
+  "trace_id": "tr_456"
+}
+```
+
+---
+
+# 63. Sensitive log filtering
+
+Implement a logging redaction layer.
+
+Block fields such as:
+
+```text
+password
+token
+secret
+authorization
+cookie
+cvv
+card
+api_key
+webhook_secret
+```
+
+Also prevent accidental LLM prompt logging if it contains customer information.
+
+---
+
+# 64. Log retention
+
+Define different retention:
+
+```text
+application logs
+audit logs
+security logs
+webhook payloads
+AI telemetry
+```
+
+Don't keep everything forever.
+
+Especially raw sensitive payloads.
+
+---
+
+# 65. Audit vs logs vs events
+
+We should deliberately keep these separate.
+
+### Application logs
+
+Debugging.
+
+### Domain events
+
+Business state changes.
+
+### Audit events
+
+Who did what and why.
+
+### Metrics
+
+Aggregated measurements.
+
+### Traces
+
+End-to-end execution.
+
+That's a major production distinction.
+
+---
+
+# 66. Domain events
+
+Examples:
+
+```text
+PaymentFailed
+RecoveryCreated
+StrategySelected
+PolicyEvaluated
+ActionApproved
+ActionExecuted
+PaymentRecovered
+RecoveryExhausted
+```
+
+These become the backbone of analytics and workflow.
+
+---
+
+# 67. Don't blindly use event sourcing
+
+Another correction.
+
+We don't need full event sourcing for the entire application.
+
+Use:
+
+```text
+normal relational state
++
+immutable domain/audit events
+```
+
+Much simpler.
+
+---
+
+# 68. Analytics layer
+
+Business dashboard needs more than database counts.
+
+Create daily/hourly aggregation jobs.
+
+Metrics:
+
+```text
+failed payment value
+recoverable value
+recovered value
+recovery rate
+time-to-recovery
+recovery by failure reason
+recovery by strategy
+```
+
+---
+
+# 69. Product analytics
+
+Track merchant product usage:
+
+```text
+dashboard_opened
+recovery_viewed
+approval_created
+approval_completed
+policy_updated
+simulation_started
+```
+
+But don't send customer-sensitive data to third-party analytics.
+
+---
+
+# 70. Cost analytics
+
+For AI:
+
+```text
+cost per recovery
+tokens per successful recovery
+LLM calls per case
+fallback percentage
+```
+
+This answers:
+
+> Is AI economically justified?
+
+That's much stronger than:
+
+> We use GPT.
+
+---
+
+# 71. AI evaluation framework
+
+We need a proper evaluation set.
+
+Create:
+
+```text
+tests/ai-evals/
+```
+
+with scenarios like:
+
+```text
+temporary timeout
+insufficient funds
+expired payment method
+late authorization
+multiple previous retries
+high-value customer
+duplicate webhook
+customer abuse
+prompt injection attempt
+```
+
+---
+
+# 72. Evaluation dimensions
+
+Score:
+
+```text
+strategy correctness
+policy compliance
+tool selection
+unsafe action rate
+format validity
+latency
+cost
+```
+
+---
+
+# 73. Golden dataset
+
+We define expected outcomes:
+
+```text
+Scenario 001
+Expected = RETRY
+
+Scenario 002
+Expected = PAYMENT_LINK
+
+Scenario 003
+Expected = HUMAN_APPROVAL
+```
+
+Then run the model against it.
+
+This gives us actual numbers.
+
+---
+
+# 74. Model regression testing
+
+Whenever we change:
+
+```text
+prompt
+model
+tool description
+policy
+context builder
+```
+
+run the AI evaluation suite.
+
+If:
+
+```text
+accuracy: 94% → 81%
+```
+
+CI should fail or at least block release.
+
+That's genuinely impressive.
+
+---
+
+# 75. AI observability
+
+For every agent run:
+
+```text
+agent_run_id
+trace_id
+model
+prompt_version
+input_tokens
+output_tokens
+latency
+tool_calls
+decision
+confidence
+policy_result
+fallback
+error
+cost_estimate
+```
+
+Do **not** store unrestricted customer data in observability systems.
+
+---
+
+# 76. AI confidence
+
+Never interpret:
+
+```text
+confidence = 0.95
+```
+
+as mathematically proven probability unless we've calibrated it.
+
+Call it:
+
+**model-reported confidence**
+
+or use categorical confidence.
+
+---
+
+# 77. AI abuse controls
+
+Rate-limit:
+
+```text
+AI requests
+simulation jobs
+tool calls
+```
+
+Also:
+
+```text
+max context size
+max loop depth
+max execution time
+```
+
+This prevents agent loops.
+
+---
+
+# 78. Agent loop protection
+
+Potential problem:
+
+```text
+AI
+→ tool
+→ AI
+→ tool
+→ AI
+→ tool
+→ ...
+```
+
+Implement:
+
+```text
+max_steps = 8
+```
+
+then:
+
+```text
+AGENT_BUDGET_EXCEEDED
+```
+
+and escalate.
+
+---
+
+# 79. Prompt/version registry
+
+Don't keep prompts scattered through `.ts` files.
+
+Create:
+
+```text
+prompts/
+```
+
+or database-managed templates with:
+
+```text
+prompt_id
+version
+status
+created_by
+created_at
+checksum
+```
+
+This makes deployments reproducible.
+
+---
+
+# 80. Feature flags
+
+Production-grade systems need controlled rollout.
+
+Examples:
+
+```text
+AI_RECOVERY_ENABLED
+FALLBACK_RULES_ENABLED
+INCENTIVE_STRATEGY_ENABLED
+NEW_POLICY_ENGINE
+```
+
+Could use a simple database-backed feature flag system.
+
+---
+
+# 81. Kill switches
+
+This is critical.
+
+Admin should be able to immediately disable:
+
+```text
+AI actions
+automatic retry
+incentives
+notifications
+```
+
+Example:
+
+```text
+GLOBAL_RECOVERY_AUTOMATION = OFF
+```
+
+Then the system still accepts events, but moves cases to:
+
+```text
+PENDING_REVIEW
+```
+
+---
+
+# 82. Emergency mode
+
+Add:
+
+```text
+SAFE MODE
+```
+
+When enabled:
+
+```text
+No automated financial actions
+No discounts
+No retries
+Human review only
+```
+
+This gives us a very strong operational story.
+
+---
+
+# 83. Admin controls
+
+Ops console:
+
+```text
+AI enable/disable
+queue pause/resume
+DLQ replay
+webhook replay
+feature flags
+policy versions
+approval queue
+system health
+incident mode
+```
+
+---
+
+# 84. Incident management
+
+Create:
+
+```text
+docs/runbooks/
+```
+
+with:
+
+```text
+webhook-failure.md
+database-outage.md
+redis-outage.md
+llm-outage.md
+razorpay-outage.md
+queue-backlog.md
+secret-compromise.md
+```
+
+Each runbook:
+
+```text
+Symptoms
+Detection
+Immediate containment
+Investigation
+Recovery
+Verification
+Post-incident action
+```
+
+---
+
+# 85. Alerting
+
+Don't alert on everything.
+
+Alerts:
+
+```text
+webhook processing failures > threshold
+queue backlog > threshold
+DLQ > 0
+AI error rate > threshold
+payment reconciliation mismatch
+API 5xx > threshold
+database unavailable
+```
+
+---
+
+# 86. Health dashboard
+
+Show:
+
+```text
+API
+Database
+Redis
+Workers
+LLM
+Razorpay
+Queues
+Webhooks
+```
+
+with:
+
+```text
+healthy
+degraded
+critical
+```
+
+---
+
+# 87. Security monitoring
+
+Track:
+
+```text
+failed logins
+permission denied
+suspicious token reuse
+unusual approval activity
+webhook signature failures
+rate limit violations
+admin actions
+```
+
+---
+
+# 88. Security test suite
+
+We should actually attack our own app.
+
+Test:
+
+```text
+SQL injection
+XSS
+CSRF
+IDOR
+broken RBAC
+JWT/session abuse
+rate-limit bypass
+webhook spoofing
+replay
+prompt injection
+tool injection
+mass assignment
+path traversal
+SSRF where applicable
+file upload abuse if implemented
+```
+
+Follow OWASP ASVS as our baseline rather than inventing a random checklist. ([OWASP Foundation][4])
+
+---
+
+# 89. Dependency security
+
+CI checks:
+
+```text
+npm audit
+OSV
+Dependabot
+secret scanner
+```
+
+Also:
+
+```text
+outdated dependencies
+license issues
+```
+
+---
+
+# 90. Container security
+
+Docker images:
+
+```text
+minimal base
+non-root user
+read-only filesystem where feasible
+no secrets baked into image
+pinned versions
+health checks
+```
+
+---
+
+# 91. Infrastructure as Code
+
+This was missing before.
+
+Use:
+
+**Terraform**
+
+for:
+
+```text
+database
+redis
+networking
+storage
+deployment
+DNS
+secret references
+monitoring
+```
+
+You don't need a huge cloud estate.
+
+Even a small Terraform setup shows infrastructure maturity.
+
+---
+
+# 92. Network architecture
+
+Production target:
+
+```text
+Internet
+  │
+  ▼
+CDN / WAF
+  │
+  ▼
+Frontend/API
+  │
+  ├────── private → PostgreSQL
+  │
+  ├────── private → Redis
+  │
+  └────── outbound → Razorpay / LLM
+```
+
+Database and Redis should not be publicly exposed.
+
+---
+
+# 93. CORS
+
+Allow only your frontends.
+
+Not:
+
+```text
+*
+```
+
+Production configuration should use explicit origins.
+
+---
+
+# 94. Security headers
+
+Set:
+
+```text
+Content-Security-Policy
+Strict-Transport-Security
+X-Content-Type-Options
+Referrer-Policy
+Permissions-Policy
+Frame protections
+```
+
+configured appropriately for the application.
+
+---
+
+# 95. Rate limiting architecture
+
+Use multiple levels:
+
+```text
+IP
+user
+organization
+API key
+endpoint
+```
+
+Example:
+
+```text
+login          → strict
+webhook        → provider-specific
+dashboard API  → user/org
+simulation     → admin only
+AI             → user/org + budget
+```
+
+---
+
+# 96. Abuse prevention
+
+The simulation engine is dangerous if publicly accessible.
+
+Therefore:
+
+```text
+/admin/simulations
+```
+
+must be:
+
+```text
+ADMIN only
+rate limited
+disabled in production public mode if unnecessary
+```
+
+---
+
+# 97. Data retention + deletion
+
+Need lifecycle rules.
+
+Example:
+
+```text
+customer data
+audit data
+telemetry
+webhook payloads
+```
+
+Document:
+
+```text
+how long
+why
+who can access
+when deletion occurs
+```
+
+Don't blindly retain everything forever.
+
+---
+
+# 98. Backups
+
+PostgreSQL:
+
+```text
+automated backups
+point-in-time recovery
+restore testing
+```
+
+Most people say:
+
+> We have backups.
+
+Production engineering asks:
+
+> **Have you actually restored one?**
+
+So we should conduct a restore test and document it.
+
+---
+
+# 99. Disaster recovery
+
+Define:
+
+```text
+RPO
+RTO
+```
+
+Then test:
+
+```text
+database restore
+worker restart
+Redis loss
+API redeploy
+```
+
+Again, these are design targets unless actually measured.
+
+---
+
+# 100. Rebuildability
+
+A fresh machine should be able to run:
+
+```text
+git clone
+cp .env.example .env
+docker compose up
+npm run setup
+npm run seed
+```
+
+and produce a working environment.
+
+That's a serious acceptance criterion.
+
+---
+
+# 101. CI pipeline
+
+Pull request:
+
+```text
+checkout
+ ↓
+install
+ ↓
+lint
+ ↓
+typecheck
+ ↓
+unit tests
+ ↓
+integration tests
+ ↓
+security checks
+ ↓
+build
+ ↓
+container scan
+```
+
+Merge:
+
+```text
+staging deployment
+ ↓
+smoke tests
+```
+
+Production:
+
+```text
+manual approval
+ ↓
+migration
+ ↓
+deployment
+ ↓
+health checks
+ ↓
+rollback if unhealthy
+```
+
+---
+
+# 102. Deployment strategy
+
+For the competition:
+
+**simple blue/green or rolling deployment is enough.**
+
+We don't need Kubernetes.
+
+But we do need:
+
+```text
+health checks
+rollback
+versioned images
+deployment logs
+```
+
+---
+
+# 103. Environment isolation
+
+Strict separation:
+
+```text
+DEV
+STAGING
+PROD
+```
+
+Different:
+
+```text
+database
+Redis
+Razorpay keys
+webhook secrets
+LLM keys
+```
+
+No production credentials in development.
+
+---
+
+# 104. Test Mode architecture
+
+The public competition deployment should explicitly use:
+
+**Razorpay Test Mode**.
+
+Razorpay documents Test Mode as a simulation environment using dummy transactions with `rzp_test_` keys. ([Razorpay][2])
+
+That means our demo can safely show:
+
+```text
+merchant checkout
+payment events
+webhooks
+recovery
+```
+
+without real money.
+
+---
+
+# 105. Reconciliation + webhook replay UI
+
+This should be part of the Ops console:
+
+```text
+Webhook Event #123
+
+Status: PROCESSED
+
+[Replay]
+
+Payment:
+pay_123
+
+State:
+RECOVERED
+```
+
+Replay itself must be:
+
+```text
+authorized
+audited
+idempotent
+```
+
+---
+
+# 106. Database consistency strategy
+
+We use:
+
+```text
+Postgres transaction
++
+outbox
++
+queue
+```
+
+rather than:
+
+```text
+DB update
+then hope Redis works
+```
+
+This is important for reliability.
+
+---
+
+# 107. Transactional outbox architecture
+
+```text
+DB Transaction
+ │
+ ├── update recovery
+ ├── add audit event
+ └── add outbox event
+           │
+           ▼
+      outbox worker
+           │
+           ▼
+        Redis/job
+           │
+           ▼
+       worker action
+```
+
+This avoids missing events.
+
+---
+
+# 108. Inbox pattern
+
+For incoming webhooks/events:
+
+```text
+incoming event
+ ↓
+persist
+ ↓
+dedupe
+ ↓
+process
+```
+
+Together:
+
+```text
+Inbox + Outbox
+```
+
+gives us reliable event processing.
+
+---
+
+# 109. Exactly-once illusion
+
+Don't claim:
+
+> exactly-once execution.
+
+Distributed systems rarely provide that trivially.
+
+Instead design for:
+
+**at-least-once delivery + idempotent processing.**
+
+That's much more realistic and aligns with Razorpay's own webhook model. ([Razorpay][1])
+
+---
+
+# 110. Business correctness
+
+We need invariants.
+
+Examples:
+
+### Invariant 1
+
+A recovery cannot be marked recovered unless payment verification confirms it.
+
+### Invariant 2
+
+No recovery action executes after recovery expiry.
+
+### Invariant 3
+
+A blocked policy action cannot execute through another code path.
+
+### Invariant 4
+
+A webhook cannot produce duplicate business actions.
+
+### Invariant 5
+
+A user cannot modify another organization's data.
+
+These become tests.
+
+---
+
+# 111. Formal acceptance tests
+
+Example:
+
+```text
+GIVEN payment.failed
+WHEN webhook arrives twice
+THEN exactly one recovery case exists
+AND at most one action is created
+```
+
+Another:
+
+```text
+GIVEN AI recommends ₹1,000 discount
+AND merchant policy max is ₹100
+WHEN policy engine evaluates
+THEN action is BLOCKED
+```
+
+Another:
+
+```text
+GIVEN LLM unavailable
+WHEN recovery executes
+THEN deterministic fallback runs
+OR human approval is requested
+```
+
+---
+
+# 112. Load testing
+
+Use something like:
+
+```text
+k6
+```
+
+Test:
+
+```text
+100 RPS
+500 RPS
+1000 webhook events
+```
+
+But use realistic values and report **measured results only**.
+
+---
+
+# 113. Performance budget
+
+Track:
+
+```text
+API p50
+API p95
+API p99
+DB latency
+queue latency
+AI latency
+webhook acknowledgement latency
+```
+
+The UI should also have frontend performance targets.
+
+---
+
+# 114. Frontend monitoring
+
+Track:
+
+```text
+JS errors
+API failures
+slow page loads
+route errors
+web vitals
+```
+
+But avoid collecting sensitive customer information.
+
+---
+
+# 115. UX failure handling
+
+Every important screen needs:
+
+```text
+loading
+empty
+error
+success
+permission denied
+offline/retry
+```
+
+Not just the happy path.
+
+---
+
+# 116. Accessibility
+
+Production-grade web app should include:
+
+```text
+keyboard navigation
+proper labels
+semantic HTML
+focus states
+contrast
+screen-reader support
+reduced motion
+```
+
+This is another area students often completely ignore.
+
+---
+
+# 117. Internationalization
+
+Don't build full multilingual support.
+
+But architect UI text so future localization is possible.
+
+For this submission:
+
+```text
+English
+INR
+```
+
+is enough.
+
+---
+
+# 118. Admin data controls
+
+Admin pages should show:
+
+```text
+created by
+updated by
+last change
+reason
+```
+
+especially for:
+
+```text
+policies
+feature flags
+approval rules
+AI model selection
+```
+
+---
+
+# 119. Configuration management
+
+Separate:
+
+### Secrets
+
+API keys.
+
+### Configuration
+
+timeouts, limits.
+
+### Feature flags
+
+rollout control.
+
+### Policies
+
+business rules.
+
+These shouldn't all live in the same `.env`.
+
+---
+
+# 120. Change management
+
+Every production-sensitive change should have:
+
+```text
+who changed
+what changed
+old value
+new value
+why
+timestamp
+```
+
+---
+
+# 121. Policy versioning
+
+Never mutate:
+
+```text
+POLICY_V1
+```
+
+in place.
+
+Create:
+
+```text
+POLICY_V2
+```
+
+with activation time.
+
+Then historical decisions always remain explainable.
+
+---
+
+# 122. AI prompt versioning
+
+Same principle:
+
+```text
+PROMPT_V1
+PROMPT_V2
+```
+
+Every decision references the exact version.
+
+---
+
+# 123. Model rollout
+
+Don't instantly switch models globally.
+
+Have:
+
+```text
+MODEL_A = 90%
+MODEL_B = 10%
+```
+
+during testing.
+
+For our competition implementation, this can remain a documented capability or simple flag rather than requiring a full experimentation platform.
+
+---
+
+# 124. Canary strategy
+
+Before activating a new AI strategy:
+
+```text
+shadow mode
+```
+
+The new model generates a decision, but doesn't execute it.
+
+Compare:
+
+```text
+current model
+vs
+candidate model
+```
+
+This is a very strong production concept.
+
+---
+
+# 125. Shadow evaluation
+
+Example:
+
+```text
+Production recovery
+
+Model A → executes
+
+Model B → evaluates silently
+
+Compare results
+```
+
+Then promote B only if it passes the evaluation threshold.
+
+---
+
+# 126. AI governance page
+
+Dashboard:
+
+```text
+AI Models
+
+Current:
+Claude X
+
+Version:
+2026-08-01
+
+Prompt:
+recovery_strategy_v7
+
+Accuracy:
+measured benchmark
+
+Fallback:
+Rule Engine
+
+Status:
+ACTIVE
+```
+
+---
+
+# 127. AI decision explanation
+
+Don't expose hidden chain-of-thought.
+
+Instead expose a **reason summary**:
+
+```text
+Why?
+
+Temporary failure
+2 previous attempts
+High recovery probability
+Policy permits one additional retry
+```
+
+That gives auditability without pretending we can/should expose internal reasoning traces.
+
+---
+
+# 128. Customer messaging safety
+
+AI-generated customer messages pass through:
+
+```text
+content rules
+template constraints
+PII checks
+length limits
+prohibited claims
+```
+
+And for the competition:
+
+**use approved message templates wherever possible.**
+
+AI fills controlled variables.
+
+---
+
+# 129. Don't let AI make financial claims
+
+For example it should never invent:
+
+> "Your bank has approved the transaction."
+
+unless backed by actual payment data.
+
+Messages should be based on verified state.
+
+---
+
+# 130. Reconciliation dashboard
+
+Add:
+
+```text
+Payment Reconciliation
+
+Matched       1,248
+Mismatch          6
+Pending          12
+Investigating     3
+```
+
+That's a very strong fintech operations feature.
+
+---
+
+# 131. Recovery analytics
+
+Dashboard:
+
+```text
+Revenue at Risk
+₹18.4L
+
+Recovered
+₹6.7L
+
+Recovery Rate
+36.5%
+
+Avg Time
+2h 14m
+
+Best Strategy
+Payment Link
+
+Worst Strategy
+Retry
+```
+
+Again, only show real measured values generated by our system.
+
+---
+
+# 132. Recovery funnel
+
+```text
+Failed
+  1284
+    ↓
+Eligible
+   947
+    ↓
+Attempted
+   812
+    ↓
+Recovered
+   312
+```
+
+---
+
+# 133. Strategy analytics
+
+```text
+Strategy          Attempted  Recovered  Rate
+Retry             220        72         32.7%
+Payment Link      310        151        48.7%
+Reminder          180        53         29.4%
+Incentive         42         30         71.4%
+Human Review      60         28         46.6%
+```
+
+These are generated demo metrics, not fabricated claims.
+
+---
+
+# 134. Simulation environment
+
+Instead of generating fake stats manually:
+
+Create a simulation engine.
+
+Input:
+
+```text
+1000 customers
+5000 payments
+failure distribution
+```
+
+Output:
+
+```text
+events
+webhooks
+recovery cases
+actions
+outcomes
+```
+
+Then the dashboard calculates the metrics itself.
+
+---
+
+# 135. Demo control center
+
+Admin:
+
+```text
+Simulation
+
+Generate:
+[100] [1,000] [10,000]
+
+Scenario:
+[Mixed failures ▼]
+
+AI:
+[Enabled]
+
+Razorpay:
+[Test mode]
+
+Notifications:
+[Simulated]
+
+[RUN SIMULATION]
+```
+
+---
+
+# 136. Failure simulator
+
+Cases:
+
+```text
+LLM timeout
+LLM invalid JSON
+Razorpay timeout
+duplicate webhook
+out-of-order webhook
+Redis unavailable
+worker crash
+notification failure
+reconciliation mismatch
+database latency
+```
+
+---
+
+# 137. Chaos dashboard
+
+Show:
+
+```text
+Injected Failure:
+LLM TIMEOUT
+
+System Response:
+Fallback Rule Engine
+
+Result:
+Recovery continued
+
+Recovery Impact:
+0 lost cases
+```
+
+That is one of the strongest demo moments.
+
+---
+
+# 138. Documentation tree — revised
+
+```text
+docs/
+├── product/
+│   ├── problem.md
+│   ├── personas.md
+│   ├── requirements.md
+│   └── user-stories.md
+│
+├── architecture/
+│   ├── system.md
+│   ├── components.md
+│   ├── data-flow.md
+│   ├── event-flow.md
+│   └── deployment.md
+│
+├── security/
+│   ├── threat-model.md
+│   ├── auth.md
+│   ├── authorization.md
+│   ├── webhook-security.md
+│   ├── ai-security.md
+│   └── secure-development.md
+│
+├── ai/
+│   ├── architecture.md
+│   ├── tools.md
+│   ├── prompts.md
+│   ├── evaluation.md
+│   └── fallback.md
+│
+├── operations/
+│   ├── observability.md
+│   ├── alerting.md
+│   ├── runbooks.md
+│   ├── backups.md
+│   └── disaster-recovery.md
+│
+├── database/
+│   ├── schema.md
+│   └── indexing.md
+│
+├── api/
+│   ├── openapi.yaml
+│   └── error-model.md
+│
+└── adr/
+```
+
+---
+
+# 139. Architecture decision records
+
+At minimum:
+
+```text
+ADR-001 Modular monolith
+ADR-002 PostgreSQL
+ADR-003 Redis/BullMQ
+ADR-004 Razorpay integration boundary
+ADR-005 Policy engine
+ADR-006 LLM abstraction
+ADR-007 Outbox pattern
+ADR-008 Idempotency
+ADR-009 OpenTelemetry
+ADR-010 Test Mode only
+```
+
+---
+
+# 140. Runbooks
+
+At minimum:
+
+```text
+Razorpay webhook failures
+LLM outage
+Database outage
+Redis outage
+Queue backlog
+DLQ growth
+Security incident
+API key compromise
+Data mismatch
+Deployment rollback
+```
+
+---
+
+# 141. Security incident procedure
+
+If a secret is leaked:
+
+```text
+1. Disable key
+2. Rotate key
+3. Deploy replacement
+4. Audit access
+5. inspect logs
+6. determine exposure
+7. document incident
+```
+
+Razorpay documents key regeneration/rotation capabilities for exposed keys. ([Razorpay][9])
+
+---
+
+# 142. Test pyramid — final
+
+```text
+                 E2E
+               /     \
+          Integration
+          /           \
+       Contract      AI Eval
+       /                 \
+             Unit
+```
+
+And beside it:
+
+```text
+Security
+Load
+Chaos
+Migration
+Recovery
+```
+
+---
+
+# 143. Contract testing
+
+We should test our Razorpay adapter against expected request/response structures.
+
+Also test:
+
+```text
+webhook payload fixtures
+```
+
+for every supported event.
+
+That prevents accidental breaking changes.
+
+---
+
+# 144. Fixtures
+
+Store sanitized test cases:
+
+```text
+fixtures/
+├── payment.failed.json
+├── payment.authorized.json
+├── payment.captured.json
+├── order.paid.json
+└── duplicate-event.json
+```
+
+---
+
+# 145. Local development environment
+
+One command:
+
+```text
+docker compose up
+```
+
+Services:
+
+```text
+postgres
+redis
+otel collector
+mailhog
+```
+
+Optional:
+
+```text
+local AI provider
+```
+
+MailHog is useful so we can visually inspect email notifications without sending real emails.
+
+---
+
+# 146. Developer tooling
+
+Scripts:
+
+```text
+dev
+build
+test
+test:e2e
+lint
+typecheck
+db:migrate
+db:seed
+simulation
+evaluate:ai
+load-test
+```
+
+---
+
+# 147. Environment matrix
+
+Document every variable:
+
+```text
+DATABASE_URL
+REDIS_URL
+
+RAZORPAY_KEY_ID
+RAZORPAY_KEY_SECRET
+RAZORPAY_WEBHOOK_SECRET
+
+SESSION_SECRET
+
+AI_PROVIDER
+AI_MODEL
+AI_API_KEY
+
+OTEL_EXPORTER_ENDPOINT
+
+SENTRY_DSN
+```
+
+and:
+
+```text
+what it does
+required?
+secret?
+default?
+environment?
+```
+
+---
+
+# 148. Production readiness checklist
+
+## Application
+
+```text
+✓ validation
+✓ error handling
+✓ authorization
+✓ idempotency
+✓ timeouts
+✓ retries
+✓ circuit breakers
+```
+
+## Data
+
+```text
+✓ migrations
+✓ indexes
+✓ backups
+✓ recovery
+✓ retention
+```
+
+## Security
+
+```text
+✓ secrets
+✓ RBAC
+✓ tenant isolation
+✓ rate limiting
+✓ security headers
+✓ audit logging
+```
+
+## AI
+
+```text
+✓ structured output
+✓ tool permissions
+✓ policy engine
+✓ fallback
+✓ evaluation
+✓ budget limits
+```
+
+## Infrastructure
+
+```text
+✓ containers
+✓ health checks
+✓ CI/CD
+✓ monitoring
+✓ alerting
+✓ rollback
+```
+
+---
+
+# 149. What must actually be implemented vs documented
+
+This is critical because we only have a limited time window.
+
+## **Actually implement**
+
+```text
+Frontend
+Backend
+PostgreSQL
+Redis
+Razorpay Test Mode
+Webhook verification
+Idempotency
+Recovery state machine
+AI agent
+Policy engine
+Action executor
+Human approvals
+Audit trail
+Structured logging
+Metrics
+Tracing
+Error tracking
+RBAC
+Tenant isolation
+Rate limiting
+Input validation
+AI fallback
+DLQ
+Outbox
+Reconciliation
+Simulation engine
+Automated tests
+CI
+Docker
+Deployment
+```
+
+## **Implement in lightweight form**
+
+```text
+Terraform
+feature flags
+kill switch
+backup verification
+load testing
+security testing
+AI regression suite
+```
+
+## **Document as production evolution**
+
+```text
+multi-region
+full Kubernetes
+cross-region DR
+advanced secrets infrastructure
+SOC 2 processes
+formal PCI program
+large-scale Kafka architecture
+multi-region active-active
+```
+
+Don't pretend a student deployment is already a global fintech infrastructure.
+
+---
+
+# 150. The final architecture I would defend in the interview
+
+```text
+                        INTERNET
+                           │
+                     CDN / WAF
+                           │
+                     TLS / HTTPS
+                           │
+                 ┌─────────┴─────────┐
+                 │                   │
+             Merchant             Customer
+              Web App            Recovery Page
+                 │                   │
+                 └─────────┬─────────┘
+                           ▼
+                    API APPLICATION
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+        ▼                  ▼                  ▼
+   Identity/RBAC      Domain Services      Webhooks
+        │                  │                  │
+        │         ┌────────┼────────┐         │
+        │         ▼        ▼        ▼         │
+        │      Payment  Recovery  Policy      │
+        │         │        │        │         │
+        │         └────────┼────────┘         │
+        │                  ▼                  │
+        │             AI Orchestrator         │
+        │                  │                  │
+        │             Tool Sandbox             │
+        │                  │                  │
+        │             Action Executor          │
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+                  ┌────────┴────────┐
+                  ▼                 ▼
+             PostgreSQL          Redis
+                  │                 │
+                  ▼                 ▼
+               Outbox            Queues
+                  │                 │
+                  └────────┬────────┘
+                           ▼
+                         Worker
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+          Razorpay      Notify       Reconcile
+                           │
+                           ▼
+                       Verification
+                           │
+                           ▼
+                 Domain + Audit Events
+                           │
+             ┌─────────────┼─────────────┐
+             ▼             ▼             ▼
+           Logs          Metrics       Traces
+             └─────────────┼─────────────┘
+                           ▼
+                    Observability
+```
+
+---
+
+# 151. The development roadmap I would actually follow
+
+This is the **revised master roadmap**.
+
+### Phase 0 — Product specification
+
+Problem, personas, user stories, workflows, success metrics.
+
+### Phase 1 — Architecture
+
+Domain boundaries, data flows, event flows, threat model, ADRs.
+
+### Phase 2 — Repository foundation
+
+Monorepo, TypeScript, linting, Docker, CI.
+
+### Phase 3 — Infrastructure
+
+Postgres, Redis, local telemetry, configuration, secrets model.
+
+### Phase 4 — Database
+
+Full schema, constraints, indexes, migrations.
+
+### Phase 5 — Identity
+
+Authentication, sessions, RBAC, tenant isolation.
+
+### Phase 6 — Payment layer
+
+Razorpay adapter, order creation, payment verification.
+
+### Phase 7 — Webhooks
+
+Raw body, signature verification, event ledger, deduplication, async processing.
+
+### Phase 8 — Event reliability
+
+Inbox/outbox, idempotency, ordering, retries, DLQ.
+
+### Phase 9 — Payment reconciliation
+
+API-vs-database reconciliation and mismatch workflow.
+
+### Phase 10 — Recovery domain
+
+Recovery cases, action history, state machine.
+
+### Phase 11 — Policy engine
+
+Limits, approval requirements, versions.
+
+### Phase 12 — AI foundation
+
+LLM adapter, context builder, schemas, prompt registry.
+
+### Phase 13 — Agent tools
+
+Read tools, controlled actions, permissions.
+
+### Phase 14 — AI recovery strategy
+
+Recommendation + fallback rules.
+
+### Phase 15 — Human approval
+
+Approval queue, maker-checker, expiry, audit.
+
+### Phase 16 — Action execution
+
+Payment links, retries, notification actions.
+
+### Phase 17 — Notification system
+
+Templates, outbox, simulation providers.
+
+### Phase 18 — Audit system
+
+Immutable audit events and business history.
+
+### Phase 19 — Observability
+
+Structured logs, metrics, traces, correlation.
+
+### Phase 20 — Reliability
+
+Timeouts, backoff, circuit breakers, graceful shutdown.
+
+### Phase 21 — Security hardening
+
+ASVS-based testing, RBAC tests, IDOR tests, injection tests, webhook attack tests, secrets scanning. ([OWASP Foundation][4])
+
+### Phase 22 — AI security
+
+Prompt injection, tool injection, budget controls, malicious customer data.
+
+### Phase 23 — AI evaluation
+
+Golden dataset, regression suite, cost/latency/quality evaluation.
+
+### Phase 24 — Simulation
+
+Synthetic payments, event generation, failure injection.
+
+### Phase 25 — Dashboard
+
+Analytics, recovery detail, approvals, audit, webhooks, health.
+
+### Phase 26 — Operations console
+
+Kill switches, feature flags, DLQ replay, webhook replay, incidents.
+
+### Phase 27 — Performance
+
+Load testing, DB profiling, queue testing.
+
+### Phase 28 — Backup/restore
+
+Backup, restore, disaster test.
+
+### Phase 29 — Infrastructure
+
+Terraform, deployment, health checks, rollback.
+
+### Phase 30 — Staging
+
+Real Razorpay Test Mode + synthetic data.
+
+### Phase 31 — Full production-readiness review
+
+Security, reliability, AI, observability, UX, documentation.
+
+### Phase 32 — Pitch
+
+Five-minute product demo.
+
+### Phase 33 — Submission
+
+Freeze GitHub, freeze video, fill form, final verification, submit.
+
+---
+
+# 152. The three most important architectural ideas
+
+When an interviewer asks:
+
+> **"What's special about your architecture?"**
+
+I want your answer to be:
+
+### **1. AI is advisory, not authoritative.**
+
+```text
+AI → recommends
+Policy → controls
+Executor → executes
+```
+
+### **2. Everything is traceable.**
+
+```text
+Webhook
+→ Recovery
+→ AI decision
+→ Policy
+→ Action
+→ Payment
+→ Audit
+```
+
+using correlated logs, metrics and traces. OpenTelemetry explicitly supports correlating these signals through context propagation. ([OpenTelemetry][10])
+
+### **3. The system assumes failure.**
+
+```text
+duplicate webhook
+out-of-order event
+LLM failure
+Razorpay timeout
+worker crash
+queue backlog
+notification failure
+database mismatch
+```
+
+aren't exceptional cases.
+
+**They are part of the design.**
+
+---
+
+# 153. And one more major correction
+
+The previous roadmap leaned heavily toward:
+
+> "Make lots of AI agents."
+
+I **don't** want that anymore.
+
+For this project:
+
+**one strong orchestrated agent + deterministic domain services + policy engine + reliable event processing** is better than five LLM agents talking to each other.
+
+That will be:
+
+* cheaper
+* easier to test
+* easier to explain
+* more reliable
+* more production-like
+* more defensible technically
+
+---
+
+# 154. What the final GitHub should communicate
+
+When a Razorpay evaluator opens your repository, the story should be:
+
+```text
+Problem
+  ↓
+Real payment/revenue workflow
+  ↓
+Reliable event architecture
+  ↓
+AI decision layer
+  ↓
+Deterministic controls
+  ↓
+Financial action
+  ↓
+Verification
+  ↓
+Auditability
+  ↓
+Observability
+  ↓
+Security
+  ↓
+Failure recovery
+```
+
+That is much stronger than:
+
+> "I built an AI agent using an LLM."
+
+---
+
+## Final technology choice
+
+I would lock the core stack as:
+
+**Frontend:** Next.js + TypeScript
+**Backend:** NestJS + TypeScript
+**Database:** PostgreSQL
+**ORM:** Prisma
+**Queue:** Redis + BullMQ
+**Payments:** Razorpay Test Mode
+**AI:** Provider abstraction + structured tool calling
+**Validation:** Zod / Nest validation
+**Auth:** secure sessions + RBAC
+**Logging:** Pino/structured logging
+**Observability:** OpenTelemetry
+**Errors:** Sentry
+**Testing:** Vitest/Jest + Playwright + k6
+**CI:** GitHub Actions
+**Containers:** Docker
+**Infrastructure:** Terraform
+**Deployment:** managed cloud services
+**Security baseline:** OWASP ASVS 5.0.0 ([OWASP Foundation][4])
+
+And **Android stays out of the MVP**. The customer recovery page will be responsive, so it works extremely well on a phone without forcing us to maintain a second application.
+
+The next thing to produce should be a **single locked technical-specification document** containing the exact database schema, API endpoints, event contracts, recovery state machine, policy schema, agent tool schemas, logging schema, audit schema, folder structure, environment variables, security controls, test cases, and phase-by-phase acceptance criteria. That becomes our engineering contract for the entire build.
+
+[1]: https://razorpay.com/docs/webhooks/best-practices/?utm_source=chatgpt.com "Webhooks | Best Practices | Razorpay Docs"
+[2]: https://razorpay.com/docs/payments/quickstart/?utm_source=chatgpt.com "Quickstart Guide | Razorpay Docs"
+[3]: https://opentelemetry.io/docs/concepts/signals/?utm_source=chatgpt.com "Signals | OpenTelemetry"
+[4]: https://owasp.org/www-project-application-security-verification-standard//?utm_source=chatgpt.com "OWASP Application Security Verification Standard (ASVS) | OWASP Foundation"
+[5]: https://razorpay.com/docs/payments/dashboard/account-settings/api-keys/?preferred-country=IN&utm_source=chatgpt.com "API Keys Generator on Razorpay Dashboard | Razorpay Docs"
+[6]: https://razorpay.com/docs/webhooks/faqs/?preferred-country=IN&utm_source=chatgpt.com "Webhooks | FAQs | Razorpay Docs"
+[7]: https://razorpay.com/docs/webhooks/validate-test/?preferred-country=IN&utm_source=chatgpt.com "Validate and Test Webhooks | Razorpay Docs"
+[8]: https://opentelemetry.io/docs/concepts/observability-primer/?utm_source=chatgpt.com "Observability primer | OpenTelemetry"
+[9]: https://razorpay.com/docs/api/authentication/?preferred-country=IN&utm_source=chatgpt.com "API Authentication | Razorpay Docs"
+[10]: https://opentelemetry.io/docs/concepts/context-propagation/?utm_source=chatgpt.com "Context propagation | OpenTelemetry"

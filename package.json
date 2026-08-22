@@ -1,0 +1,32 @@
+{
+  "name": "recoverai-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RecoverAI: Autonomous Revenue Recovery & Payment Operations Platform",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "test:e2e": "playwright test",
+    "test:security": "vitest run tests/security",
+    "test:ai-evals": "vitest run tests/ai-evals",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @recoverai/database generate",
+    "db:migrate": "pnpm --filter @recoverai/database migrate",
+    "db:seed": "pnpm --filter @recoverai/database seed",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "prettier": "^3.3.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.11"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

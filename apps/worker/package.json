@@ -1,0 +1,33 @@
+{
+  "name": "@recoverai/worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@recoverai/ai": "workspace:*",
+    "@recoverai/audit": "workspace:*",
+    "@recoverai/config": "workspace:*",
+    "@recoverai/database": "workspace:*",
+    "@recoverai/domain": "workspace:*",
+    "@recoverai/notifications": "workspace:*",
+    "@recoverai/observability": "workspace:*",
+    "@recoverai/payments": "workspace:*",
+    "@recoverai/policies": "workspace:*",
+    "@recoverai/recovery": "workspace:*",
+    "@recoverai/security": "workspace:*",
+    "@recoverai/validation": "workspace:*",
+    "bullmq": "^5.8.2",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}
