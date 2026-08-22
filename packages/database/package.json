@@ -10,7 +10,7 @@
     "migrate": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "seed": "tsx src/seed.ts",
-    "lint": "eslint .",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

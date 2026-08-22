@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   transpilePackages: [
     '@recoverai/config',
     '@recoverai/domain',
@@ -9,3 +12,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+

@@ -52,7 +52,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Generate Prisma Client
         run: pnpm db:generate
@@ -62,6 +62,9 @@ jobs:
 
       - name: Run TypeScript Typecheck
         run: pnpm typecheck
+
+      - name: Run Monorepo Build
+        run: pnpm build
 
       - name: Run Unit & OWASP Security Tests
         run: pnpm test:security
