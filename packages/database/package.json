@@ -7,9 +7,10 @@
   "scripts": {
     "build": "tsc",
     "generate": "prisma generate",
+    "push": "prisma db push",
     "migrate": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
-    "seed": "tsx src/seed.ts",
+    "seed": "tsx --env-file=.env src/seed.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
