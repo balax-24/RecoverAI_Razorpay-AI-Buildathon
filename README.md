@@ -55,10 +55,10 @@ docker compose up -d
 # 2. Copy environment template
 cp .env.example .env
 
-# 3. Install, Migrate & Seed
+# 3. Install, Sync Schema & Seed
 pnpm install
 pnpm db:generate
-pnpm db:migrate
+pnpm db:push
 pnpm db:seed
 
 # 4. Run Monorepo Build & Automated Test Suite (75/75 Passing)
