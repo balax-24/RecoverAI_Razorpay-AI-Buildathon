@@ -57,14 +57,14 @@ jobs:
       - name: Generate Prisma Client
         run: pnpm db:generate
 
+      - name: Run Monorepo Build
+        run: pnpm build
+
       - name: Run Linting
         run: pnpm lint
 
       - name: Run TypeScript Typecheck
         run: pnpm typecheck
-
-      - name: Run Monorepo Build
-        run: pnpm build
 
       - name: Run Unit & OWASP Security Tests
         run: pnpm test:security
