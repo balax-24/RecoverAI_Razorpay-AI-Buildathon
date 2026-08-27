@@ -1,6 +1,8 @@
 import {
   Controller,
   Post,
+  Get,
+  Query,
   Req,
   Headers,
   HttpException,
@@ -24,6 +26,41 @@ export class WebhooksController {
         url: process.env.REDIS_URL || 'redis://localhost:6379',
       },
     });
+  }
+
+  @Get('events')
+  public async listWebhookEvents(
+    @Query('status') status?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '25'
+  ) {
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+
+    const whereClause: any = {};
+    if (status && status !== 'ALL') {
+      whereClause.processingStatus = status;
+    }
+
+    const [events, total] = await Promise.all([
+      prisma.webhookEvent.findMany({
+        where: whereClause,
+        orderBy: { receivedAt: 'desc' },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+      prisma.webhookEvent.count({ where: whereClause }),
+    ]);
+
+    return {
+      data: events,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum) || 1,
+      },
+    };
   }
 
   @Post('razorpay')
@@ -111,7 +148,6 @@ export class WebhooksController {
       return { status: 'acknowledged', eventId: eventRecord.id };
     } catch (err: any) {
       logger.error(err, 'Failed to persist and enqueue webhook');
-      // If uniqueness violation happens in race condition, acknowledge
       if (err.code === 'P2002') {
         return { status: 'duplicate_acknowledged' };
       }

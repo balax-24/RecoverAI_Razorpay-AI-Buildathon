@@ -5,6 +5,11 @@ import { AuthController } from './auth/auth.controller';
 import { RecoveryController } from './recovery/recovery.controller';
 import { ApprovalsController } from './approvals/approvals.controller';
 import { CustomerRecoveryController } from './customer/customer.controller';
+import { SimulationController } from './simulation/simulation.controller';
+import { PoliciesController } from './policies/policies.controller';
+import { ReconciliationController } from './reconciliation/reconciliation.controller';
+import { AuditController } from './audit/audit.controller';
+import { DebugController } from './debug/debug.controller';
 
 @Module({
   imports: [],
@@ -15,6 +20,11 @@ import { CustomerRecoveryController } from './customer/customer.controller';
     RecoveryController,
     ApprovalsController,
     CustomerRecoveryController,
+    SimulationController,
+    PoliciesController,
+    ReconciliationController,
+    AuditController,
+    DebugController,
   ],
   providers: [],
 })

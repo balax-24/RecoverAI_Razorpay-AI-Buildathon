@@ -1,309 +1,591 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Navbar } from '@/components/Navbar';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Navbar, NavTab } from '@/components/Navbar';
+import { KpiCard } from '@/components/KpiCard';
+import { PipelineStageBar } from '@/components/PipelineStageBar';
+import { RecoveryTable, RecoveryCaseRecord } from '@/components/RecoveryTable';
+import { RecoveryDrawer } from '@/components/RecoveryDrawer';
+import { ApprovalsView, PendingApproval } from '@/components/ApprovalsView';
+import { PoliciesView } from '@/components/PoliciesView';
+import { AuditView, AuditEventRecord } from '@/components/AuditView';
+import { WebhooksView, WebhookEventRecord } from '@/components/WebhooksView';
+import { ReconciliationView, ReconciliationSummary, ReconciliationLog } from '@/components/ReconciliationView';
+import { SystemHealthView, ServiceHealth } from '@/components/SystemHealthView';
 import {
-  TrendingUp,
-  Clock,
-  ShieldAlert,
-  Sparkles,
-  Sliders,
   DollarSign,
-  Zap,
-  Lock,
-  ChevronRight,
-  Database,
+  Clock,
+  Sparkles,
+  ShieldAlert,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
 export default function MerchantDashboard() {
+  const [activeTab, setActiveTab] = useState<NavTab>('overview');
   const [isDemoMode, setIsDemoMode] = useState(true);
   const [selectedCase, setSelectedCase] = useState<any | null>(null);
 
-  // Demo stats
-  const stats = [
-    {
-      title: 'Total Recovered Revenue',
-      value: isDemoMode ? '₹1,42,850' : '₹0',
-      change: '+18.4% this week',
-      icon: DollarSign,
-      color: 'text-emerald-400',
-      bg: 'bg-emerald-500/10 border-emerald-500/20',
-    },
-    {
-      title: 'Active Recovery Cases',
-      value: isDemoMode ? '24' : '0',
-      change: '14 automated, 10 in grace',
-      icon: Clock,
-      color: 'text-brand-400',
-      bg: 'bg-brand-500/10 border-brand-500/20',
-    },
-    {
-      title: 'AI Strategy Success Rate',
-      value: isDemoMode ? '78.2%' : '0%',
-      change: 'Single Orchestrator v1',
-      icon: Sparkles,
-      color: 'text-purple-400',
-      bg: 'bg-purple-500/10 border-purple-500/20',
-    },
-    {
-      title: 'Maker-Checker Pending',
-      value: isDemoMode ? '3' : '0',
-      change: 'High-value transactions',
-      icon: ShieldAlert,
-      color: 'text-amber-400',
-      bg: 'bg-amber-500/10 border-amber-500/20',
-    },
-  ];
+  // Table state
+  const [cases, setCases] = useState<RecoveryCaseRecord[]>([]);
+  const [totalCases, setTotalCases] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoadingCases, setIsLoadingCases] = useState(false);
 
-  const mockCases = [
-    {
-      id: 'rec_case_89a1b2',
-      customer: 'Rahul Sharma',
-      email: 'rahul.sharma@example.com',
-      amount: '₹14,500.00',
-      rawAmount: 14500,
-      reason: 'GATEWAY_TIMEOUT',
-      status: 'PENDING_APPROVAL',
-      strategy: 'INCENTIVE_OFFER (₹100 discount)',
-      confidence: '94%',
-      time: '12m ago',
-      traceId: 'tr_8f2c019a',
-      policyReason: 'High-value transaction > ₹10,000 threshold requires Maker-Checker dual authorization',
-      timeline: [
-        { time: '10:30:12', event: 'Payment failed on Razorpay switch (GATEWAY_TIMEOUT)' },
-        { time: '10:30:12', event: 'Sub-25ms webhook ingested & verified via raw buffer HMAC SHA-256' },
-        { time: '10:30:13', event: 'AI Single Orchestrator recommended INCENTIVE_OFFER (Confidence: 94%)' },
-        { time: '10:30:13', event: 'Policy Engine flagged HIGH_VALUE_THRESHOLD_EXCEEDED; routed to Maker-Checker queue' },
-      ],
+  // Filters & Search
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL');
+  const [reasonFilter, setReasonFilter] = useState('ALL');
+  const [strategyFilter, setStrategyFilter] = useState('ALL');
+  const [sortBy, setSortBy] = useState('createdAt');
+  const [sortOrder, setSortOrder] = useState('desc');
+
+  // Metrics state (Live Database Driven - Zero Initial State)
+  const [metrics, setMetrics] = useState({
+    revenueAtRisk: 0,
+    revenueRecovered: 0,
+    activeCases: 0,
+    recoveryRate: 0,
+    pendingApprovals: 0,
+    failedJobs: 0,
+    totalCases: 0,
+    pipeline: {
+      failed: 0,
+      analyzing: 0,
+      policyCheck: 0,
+      actionRunning: 0,
+      recovered: 0,
+      escalated: 0,
     },
-    {
-      id: 'rec_case_77c3d4',
-      customer: 'Pooja Verma',
-      email: 'pooja.v@example.com',
-      amount: '₹3,200.00',
-      rawAmount: 3200,
-      reason: 'INSUFFICIENT_FUNDS',
-      status: 'ACTION_EXECUTED',
-      strategy: 'PAYMENT_LINK (Email)',
-      confidence: '89%',
-      time: '45m ago',
-      traceId: 'tr_77d4021b',
-      policyReason: 'Conforms to default policy limits',
-      timeline: [
-        { time: '09:45:00', event: 'Payment failed (INSUFFICIENT_FUNDS)' },
-        { time: '09:45:01', event: 'AI Orchestrator evaluated context & generated Payment Link recommendation' },
-        { time: '09:45:01', event: 'Policy Engine approved action (ALLOW)' },
-        { time: '09:45:02', event: 'Dispatched payment recovery link via transactional outbox to pooja.v@example.com' },
-      ],
-    },
-    {
-      id: 'rec_case_65e5f6',
-      customer: 'Ananya Patel',
-      email: 'ananya.p@example.com',
-      amount: '₹8,990.00',
-      rawAmount: 8990,
-      reason: 'NETWORK_TIMEOUT',
-      status: 'RECOVERED',
-      strategy: 'SMART_RETRY',
-      confidence: '96%',
-      time: '2h ago',
-      traceId: 'tr_65e5f600',
-      policyReason: 'Recovered via automated smart retry',
-      timeline: [
-        { time: '08:15:00', event: 'Payment failed (NETWORK_TIMEOUT)' },
-        { time: '08:15:01', event: 'AI scheduled Smart Retry with 1h delay' },
-        { time: '09:15:00', event: 'Smart retry executed successfully; payment captured' },
-        { time: '09:15:01', event: 'Recovery case resolved as RECOVERED' },
-      ],
-    },
-  ];
+  });
+
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Auxiliary tab data
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [policies, setPolicies] = useState<any[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditActorFilter, setAuditActorFilter] = useState('ALL');
+
+  const [webhooks, setWebhooks] = useState<WebhookEventRecord[]>([]);
+
+  const [reconciliationSummary, setReconciliationSummary] = useState<ReconciliationSummary>({
+    paymentsChecked: 0,
+    matched: 0,
+    mismatches: 0,
+    resolved: 0,
+    needsReview: 0,
+    lastReconciliationAt: new Date().toISOString(),
+  });
+  const [reconciliationLogs, setReconciliationLogs] = useState<ReconciliationLog[]>([]);
+  const [healthServices, setHealthServices] = useState<ServiceHealth[]>([]);
+
+  // 1. Fetch Metrics
+  const fetchMetrics = useCallback(async () => {
+    try {
+      const url = `${API_BASE}/recovery/metrics`;
+      const res = await fetch(url, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMetrics(data);
+        setApiError(null);
+      } else {
+        setApiError(`API returned HTTP ${res.status} from ${url}`);
+      }
+    } catch (err: any) {
+      setApiError(`Unable to reach backend at ${API_BASE}/recovery/metrics`);
+    }
+  }, [isDemoMode]);
+
+  // 2. Fetch Cases List
+  const fetchCases = useCallback(async () => {
+    setIsLoadingCases(true);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: pageSize.toString(),
+        status: statusFilter,
+        reasonCode: reasonFilter,
+        strategy: strategyFilter,
+        search,
+        sortBy,
+        sortOrder,
+      });
+
+      const url = `${API_BASE}/recovery/cases?${params.toString()}`;
+      const res = await fetch(url, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        setCases(json.data || []);
+        setTotalCases(json.meta?.total || 0);
+        setTotalPages(json.meta?.totalPages || 1);
+        setApiError(null);
+      } else {
+        setApiError(`API returned HTTP ${res.status} from ${url}`);
+      }
+    } catch (err: any) {
+      setApiError(`Unable to reach backend at ${API_BASE}/recovery/cases`);
+    } finally {
+      setIsLoadingCases(false);
+    }
+  }, [page, pageSize, statusFilter, reasonFilter, strategyFilter, search, sortBy, sortOrder, isDemoMode]);
+
+  // 3. Fetch Approvals
+  const fetchApprovals = useCallback(async () => {
+    try {
+      const url = `${API_BASE}/approvals/pending`;
+      const res = await fetch(url, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApprovals(data || []);
+        setApiError(null);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [isDemoMode]);
+
+  // 4. Fetch Details for Drawer
+  const fetchCaseDetails = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/recovery/cases/${id}`, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedCase(data);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [isDemoMode]);
+
+  // 5. Fetch Policies
+  const fetchPolicies = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/policies`, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPolicies(data || []);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [isDemoMode]);
+
+  // 6. Fetch Audit
+  const fetchAudit = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        page: auditPage.toString(),
+        limit: '25',
+        search: auditSearch,
+        actor: auditActorFilter,
+      });
+      const res = await fetch(`${API_BASE}/audit?${params.toString()}`, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setAuditEvents(json.data || []);
+        setAuditTotal(json.meta?.total || 0);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [auditPage, auditSearch, auditActorFilter, isDemoMode]);
+
+  // 7. Fetch Webhooks
+  const fetchWebhooks = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/webhooks/events?limit=25`, {
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setWebhooks(json.data || []);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [isDemoMode]);
+
+  // 8. Fetch Reconciliation
+  const fetchReconciliation = useCallback(async () => {
+    try {
+      const [sumRes, logsRes] = await Promise.all([
+        fetch(`${API_BASE}/reconciliation/summary`, {
+          headers: { 'x-demo-mode': isDemoMode.toString() },
+        }),
+        fetch(`${API_BASE}/reconciliation/logs`, {
+          headers: { 'x-demo-mode': isDemoMode.toString() },
+        }),
+      ]);
+
+      if (sumRes.ok) {
+        const sumData = await sumRes.json();
+        setReconciliationSummary(sumData);
+      }
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        setReconciliationLogs(logsData || []);
+      }
+    } catch {
+      // Resilient
+    }
+  }, [isDemoMode]);
+
+  // 9. Fetch Health
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/health/services`);
+      if (res.ok) {
+        const data = await res.json();
+        setHealthServices(data.services || []);
+      }
+    } catch {
+      // Resilient
+    }
+  }, []);
+
+  // Approvals Actions
+  const handleApprove = async (id: string, notes: string) => {
+    try {
+      await fetch(`${API_BASE}/approvals/${id}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-demo-mode': isDemoMode.toString(),
+        },
+        body: JSON.stringify({ action: 'APPROVE', reviewNotes: notes }),
+      });
+      fetchApprovals();
+      fetchCases();
+      fetchMetrics();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleReject = async (id: string, notes: string) => {
+    try {
+      await fetch(`${API_BASE}/approvals/${id}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-demo-mode': isDemoMode.toString(),
+        },
+        body: JSON.stringify({ action: 'REJECT', reviewNotes: notes }),
+      });
+      fetchApprovals();
+      fetchCases();
+      fetchMetrics();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleResolveReconciliation = async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/reconciliation/${id}/resolve`, {
+        method: 'POST',
+      });
+      fetchReconciliation();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleRetryEvaluation = async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/recovery/cases/${id}/retry`, {
+        method: 'POST',
+        headers: { 'x-demo-mode': isDemoMode.toString() },
+      });
+      fetchCaseDetails(id);
+      fetchCases();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Initial Seed & Polling
+  useEffect(() => {
+    fetchMetrics();
+    fetchCases();
+    fetchApprovals();
+    fetchPolicies();
+    fetchAudit();
+    fetchWebhooks();
+    fetchReconciliation();
+    fetchHealth();
+  }, [fetchMetrics, fetchCases, fetchApprovals, fetchPolicies, fetchAudit, fetchWebhooks, fetchReconciliation, fetchHealth]);
+
+  // Periodic Polling (Every 3-4s)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchMetrics();
+      fetchCases();
+      fetchApprovals();
+      if (selectedCase?.id) {
+        fetchCaseDetails(selectedCase.id);
+      }
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [fetchMetrics, fetchCases, fetchApprovals, fetchCaseDetails, selectedCase]);
+
+  // Handle Sort
+  const handleSortChange = (field: string) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('desc');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-brand-500">
-      <Navbar />
+      <Navbar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        pendingApprovalsCount={approvals.length}
+        isDemoMode={isDemoMode}
+        onToggleDemoMode={() => setIsDemoMode(!isDemoMode)}
+      />
 
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-        {/* Top Header & Demo Toggle */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-800/80 pb-6">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
-                Recovery Operations Center
-              </h1>
-              {isDemoMode && (
-                <span className="rounded-full bg-indigo-500/10 px-3 py-0.5 text-xs font-semibold text-indigo-400 border border-indigo-500/20 flex items-center gap-1">
-                  <Database className="h-3 w-3" />
-                  Synthetic Demo Data Active
-                </span>
-              )}
+        {apiError && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-950/40 p-4 text-xs text-rose-300 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-rose-400 shrink-0" />
+              <span>{apiError}</span>
             </div>
-            <p className="mt-1 text-sm text-slate-400">
-              Deterministic policy enforcement, AI strategy recommendations, and Razorpay webhook convergence.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
             <button
-              onClick={() => setIsDemoMode(!isDemoMode)}
-              className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-slate-300 border border-slate-800 hover:bg-slate-800 transition"
+              onClick={() => {
+                fetchMetrics();
+                fetchCases();
+                fetchApprovals();
+              }}
+              className="rounded-lg bg-rose-500/20 border border-rose-500/30 px-2.5 py-1 text-xs font-semibold text-rose-200 hover:bg-rose-500/30"
             >
-              <Zap className="h-3.5 w-3.5 text-amber-400" />
-              {isDemoMode ? 'Switch to Live Feed' : 'Load Synthetic Demo'}
-            </button>
-            <button className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-brand-500/25 hover:opacity-95 transition">
-              <Sliders className="h-3.5 w-3.5" />
-              Policy Rules DSL
+              Retry Connection
             </button>
           </div>
-        </div>
+        )}
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.map((stat, idx) => {
-            const Icon = stat.icon;
-            return (
-              <div
-                key={idx}
-                className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-md transition hover:border-slate-700"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
-                    {stat.title}
-                  </span>
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${stat.bg}`}>
-                    <Icon className={`h-5 w-5 ${stat.color}`} />
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <div className="text-3xl font-extrabold tracking-tight text-white">
-                    {stat.value}
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400 flex items-center gap-1">
-                    <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                    {stat.change}
-                  </p>
-                </div>
+        {/* Main Overview Tab */}
+        {activeTab === 'overview' && (
+          <>
+            {/* Live Ingestion Alert Banner */}
+            <div className="flex items-center justify-between rounded-xl bg-indigo-950/40 border border-indigo-500/20 px-4 py-2.5 text-xs text-indigo-300">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="font-semibold text-white font-mono">
+                  REAL-TIME INGESTION ACTIVE
+                </span>
+                <span className="hidden sm:inline text-slate-400 font-sans">
+                  • Ingesting Razorpay payment failures, executing AI strategy evaluations & deterministic policy checks.
+                </span>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Recovery Stream & Detailed Inspection Drawer */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Table */}
-          <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-md overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-              <h2 className="text-base font-bold text-white">Active Payment Failure Stream</h2>
-              <span className="text-xs text-slate-400 font-mono">Real-Time Ingestion: Active</span>
+              <div className="text-[11px] font-mono text-slate-400">
+                Auto-refresh: 3s
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-950/50 text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="px-6 py-3 font-semibold">Customer / Case</th>
-                    <th className="px-6 py-3 font-semibold">Amount</th>
-                    <th className="px-6 py-3 font-semibold">Status</th>
-                    <th className="px-6 py-3 font-semibold text-right">Details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {mockCases.map((c) => (
-                    <tr
-                      key={c.id}
-                      onClick={() => setSelectedCase(c)}
-                      className={`cursor-pointer transition ${
-                        selectedCase?.id === c.id ? 'bg-slate-800/60' : 'hover:bg-slate-800/30'
-                      }`}
-                    >
-                      <td className="px-6 py-4">
-                        <div className="font-semibold text-white">{c.customer}</div>
-                        <div className="text-xs text-slate-400 font-mono">{c.id}</div>
-                      </td>
-                      <td className="px-6 py-4 font-bold text-white font-mono">{c.amount}</td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold border ${
-                            c.status === 'RECOVERED'
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                              : c.status === 'PENDING_APPROVAL'
-                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                              : 'bg-brand-500/10 text-brand-400 border-brand-500/20'
-                          }`}
-                        >
-                          {c.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <ChevronRight className="h-4 w-4 text-slate-400 inline" />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* PART 7: KPI STRIP (6 Operational Summary Cards) */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
+              <KpiCard
+                title="Revenue At Risk"
+                value={`₹${metrics.revenueAtRisk.toLocaleString('en-IN')}`}
+                subtitle="Active failed volume"
+                badge="Live"
+                icon={DollarSign}
+                variant="rose"
+              />
+              <KpiCard
+                title="Recovered Revenue"
+                value={`₹${metrics.revenueRecovered.toLocaleString('en-IN')}`}
+                subtitle={`${metrics.recoveryRate}% conversion`}
+                badge="Captured"
+                icon={CheckCircle2}
+                variant="emerald"
+              />
+              <KpiCard
+                title="Active Cases"
+                value={metrics.activeCases.toLocaleString('en-IN')}
+                subtitle="Automated in flight"
+                badge="Processing"
+                icon={Clock}
+                variant="sky"
+              />
+              <KpiCard
+                title="Recovery Rate"
+                value={`${metrics.recoveryRate}%`}
+                subtitle="Single Orchestrator v1"
+                badge="Adaptive"
+                icon={Sparkles}
+                variant="purple"
+              />
+              <KpiCard
+                title="Awaiting Approval"
+                value={approvals.length || metrics.pendingApprovals}
+                subtitle="Maker-Checker queue"
+                badge="High-Risk"
+                icon={ShieldAlert}
+                variant="amber"
+              />
+              <KpiCard
+                title="Failed Jobs / DLQ"
+                value={metrics.failedJobs}
+                subtitle="Circuit breaker safe"
+                badge="Nominal"
+                icon={AlertTriangle}
+                variant="indigo"
+              />
             </div>
-          </div>
 
-          {/* Recovery Detail Drawer */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-md p-6 space-y-6">
-            {selectedCase ? (
-              <>
-                <div className="border-b border-slate-800 pb-4">
-                  <span className="text-xs font-mono text-brand-400">{selectedCase.id}</span>
-                  <h3 className="text-xl font-bold text-white mt-1">{selectedCase.customer}</h3>
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-2xl font-extrabold text-white font-mono">{selectedCase.amount}</span>
-                    <span className="rounded-md bg-rose-500/10 px-2 py-0.5 text-xs font-mono text-rose-400 border border-rose-500/20">
-                      {selectedCase.reason}
-                    </span>
-                  </div>
-                </div>
+            {/* PART 8: Horizontal Recovery Pipeline Stage Bar */}
+            <PipelineStageBar
+              counts={metrics.pipeline}
+              activeFilter={statusFilter}
+              onSelectFilter={(st) => {
+                setStatusFilter(st);
+                setPage(1);
+              }}
+            />
 
-                {/* AI & Policy Recommendation */}
-                <div className="rounded-xl bg-slate-950/60 p-4 border border-slate-800 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-semibold text-purple-300">
-                    <span className="flex items-center gap-1.5">
-                      <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-                      AI Recommended Strategy
-                    </span>
-                    <span>Confidence: {selectedCase.confidence}</span>
-                  </div>
-                  <div className="text-sm font-semibold text-white">{selectedCase.strategy}</div>
-                  <p className="text-xs text-slate-400">{selectedCase.policyReason}</p>
-                </div>
+            {/* PART 9: Main Recovery Case Table with 25+ Rows & Server Pagination */}
+            <RecoveryTable
+              cases={cases}
+              total={totalCases}
+              page={page}
+              pageSize={pageSize}
+              totalPages={totalPages}
+              isLoading={isLoadingCases}
+              search={search}
+              statusFilter={statusFilter}
+              reasonFilter={reasonFilter}
+              strategyFilter={strategyFilter}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSearchChange={(val) => {
+                setSearch(val);
+                setPage(1);
+              }}
+              onStatusFilterChange={(val) => {
+                setStatusFilter(val);
+                setPage(1);
+              }}
+              onReasonFilterChange={(val) => {
+                setReasonFilter(val);
+                setPage(1);
+              }}
+              onStrategyFilterChange={(val) => {
+                setStrategyFilter(val);
+                setPage(1);
+              }}
+              onSortChange={handleSortChange}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+              onSelectCase={(c) => fetchCaseDetails(c.id)}
+              onRefresh={() => {
+                fetchCases();
+                fetchMetrics();
+              }}
+            />
+          </>
+        )}
 
-                {/* Audit & Invariant Timeline */}
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-                    Immutable Audit Timeline
-                  </h4>
-                  <div className="space-y-3 border-l-2 border-slate-800 pl-4 text-xs font-mono">
-                    {selectedCase.timeline.map((step: any, idx: number) => (
-                      <div key={idx} className="relative">
-                        <div className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-brand-500" />
-                        <span className="text-slate-500">{step.time}</span>
-                        <div className="text-slate-200 mt-0.5">{step.event}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+        {/* Tab 2: Maker-Checker Approvals */}
+        {activeTab === 'approvals' && (
+          <ApprovalsView
+            approvals={approvals}
+            isLoading={false}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onRefresh={fetchApprovals}
+          />
+        )}
 
-                <div className="pt-2 text-xs text-slate-500 font-mono flex items-center justify-between">
-                  <span>Trace: {selectedCase.traceId}</span>
-                  <span className="text-emerald-400 flex items-center gap-1">
-                    <Lock className="h-3 w-3" /> W3C Verified
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div className="h-64 flex flex-col items-center justify-center text-center text-slate-400 space-y-2">
-                <Clock className="h-8 w-8 text-slate-600" />
-                <p className="text-sm">Select a recovery case to inspect AI decisions, policy evaluations, and audit timelines.</p>
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Tab 3: Policies DSL */}
+        {activeTab === 'policies' && <PoliciesView policies={policies} />}
+
+        {/* Tab 4: Audit Trail */}
+        {activeTab === 'audit' && (
+          <AuditView
+            events={auditEvents}
+            total={auditTotal}
+            page={auditPage}
+            pageSize={25}
+            totalPages={Math.ceil(auditTotal / 25) || 1}
+            isLoading={false}
+            search={auditSearch}
+            actorFilter={auditActorFilter}
+            onSearchChange={setAuditSearch}
+            onActorFilterChange={setAuditActorFilter}
+            onPageChange={setAuditPage}
+          />
+        )}
+
+        {/* Tab 5: Webhooks Ledger */}
+        {activeTab === 'webhooks' && (
+          <WebhooksView
+            events={webhooks}
+            isLoading={false}
+            onRefresh={fetchWebhooks}
+          />
+        )}
+
+        {/* Tab 6: Reconciliation */}
+        {activeTab === 'reconciliation' && (
+          <ReconciliationView
+            summary={reconciliationSummary}
+            logs={reconciliationLogs}
+            isLoading={false}
+            onResolve={handleResolveReconciliation}
+            onRefresh={fetchReconciliation}
+          />
+        )}
+
+        {/* Tab 7: System Health */}
+        {activeTab === 'health' && (
+          <SystemHealthView
+            services={healthServices}
+            isLoading={false}
+            onRefresh={fetchHealth}
+          />
+        )}
       </main>
+
+      {/* Centerpiece Detail Drawer */}
+      {selectedCase && (
+        <RecoveryDrawer
+          recoveryCase={selectedCase}
+          onClose={() => setSelectedCase(null)}
+          onRetryEvaluation={handleRetryEvaluation}
+        />
+      )}
     </div>
   );
 }

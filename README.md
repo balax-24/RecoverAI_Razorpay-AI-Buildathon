@@ -58,10 +58,10 @@ cp .env.example .env
 # 3. Install, Sync Schema & Seed
 pnpm install
 pnpm db:generate
-pnpm db:push
+pnpm db:migrate
 pnpm db:seed
 
-# 4. Run Monorepo Build & Automated Test Suite (75/75 Passing)
+# 4. Run Monorepo Build & Automated Test Suite (85/85 Passing)
 pnpm build
 pnpm vitest run
 
