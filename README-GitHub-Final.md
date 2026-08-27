@@ -16,6 +16,34 @@ AI is used where contextual decision-making is useful, while financial execution
 
 ---
 
+## 🎥 Demo
+
+**5-minute product walkthrough:** `PASTE_YOUR_UNLISTED_VIDEO_LINK_HERE`
+
+The recording demonstrates:
+
+```text
+Merchant Dashboard
+      ↓
+Synthetic Payment Injection
+      ↓
+Live Recovery Cases
+      ↓
+AI Recommendation
+      ↓
+Deterministic Policy Check
+      ↓
+Controlled Action
+      ↓
+Verification
+      ↓
+Audit + Trace
+```
+
+It also demonstrates AI timeout fallback, duplicate webhook handling, adversarial prompt-injection blocking, and reconciliation.
+
+---
+
 ## 🎯 What is RecoverAI?
 
 RecoverAI is an autonomous revenue recovery and payment operations platform for failed payments.
