@@ -874,11 +874,6 @@ Payment systems are asynchronous and local state can temporarily diverge from pr
 
 - [Incident Runbooks](docs/runbooks/INCIDENT-RUNBOOKS.md)
 
-### Presentation
-
-- [5-Minute Video Pitch Script](docs/presentation/5-minute-video-script.md)
-- [Submission Form Answers](docs/presentation/submission-form-answers.md)
-
 ---
 
 # ⚠️ Scope & Limitations
